@@ -1,0 +1,48 @@
+#!/bin/bash
+convpure() {
+    f=$1
+    S=$2
+    dir=$3
+    convert $f -geometry ${S}x${S} $dir/$i
+    IN="ResolutionUnit Make Model ModifyDate ExifVersion DateTimeOriginal CreateDate TimeCreated DigitalCreationDate DigitalCreationTime ExposureProgram ExposureTime FNumber ISO Flash MeteringMode ApertureValue FocalLength ColorSpace LensModel Lens CreatorTool HistoryWhen MetadataDate DateCreated DateTimeCreated DigitalCreationDateTime ShutterSpeedValue ShutterSpeed SubSecCreateDate SubSecDateTimeOriginal LensID"
+    OPT=""
+    for o in `exiftool -csv $f | head -1 | sed -e 's/,/ /g'`
+    do
+        flag=0
+        for j in $IN
+        do
+            if [ $o = $j ]; then
+                flag=1
+            fi
+        done
+        if [ $flag -eq 0 ]; then
+            OPT="$OPT --$o"
+        fi
+    done
+    exiftool -overwrite_original -all= -tagsFromFile $f $OPT $dir/$i
+}
+
+convjust() {
+    f=$1
+    S=$2
+    dir=$3
+    convert $f -geometry ${S}x${S} $dir/$i
+}
+
+convsrgb() {
+    f=$1
+    S=$2
+    dir=$3
+    convert $f -geometry ${S}x${S} -profile ~/bin/sRGB_IEC61966-2-1_black_scaled.icc $dir/$i
+}
+
+S=2048
+mkdir -p ${S}pure
+mkdir -p ${S}just
+mkdir -p ${S}srgb
+for i in *.jpg
+do
+    convpure $i $S ${S}pure
+    convjust $i $S ${S}just
+    convsrgb $i $S ${S}srgb
+done
