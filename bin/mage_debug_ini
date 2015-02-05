@@ -2,7 +2,7 @@
 for i in . .. ../..
 do
     if [ -f $i/app/etc/local.xml ]; then
-        rm -rf $i/var/cache/* $i/var/full_page_cache/* $i/var/report/*
+        rm -rf $i/var/cache/* $i/var/full_page_cache/* $i/var/report/* $i/media/js/* $i/media/css/* $i/media/css_secure/*
         cat /dev/null > $i/var/log/system.log
         cat /dev/null > $i/var/log/exception.log
         cat /dev/null > $i/var/log/quote.log
