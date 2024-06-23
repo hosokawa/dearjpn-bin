@@ -8,8 +8,7 @@ if [ $PRE == $POST ]; then
 else
     mkdir /tmp/data-get.lock > /dev/null 2>&1
     if [ $? == 0 ]; then
-        ( cd /home/hosokawa/working/php/memo/signal/src; ../bin/update-ohlc )
-        ( cd /home/hosokawa/working/php/memo/feature; ./mkcsv.sh )
+        ( cd /home/hosokawa/working/troml/; bin/update-ohlc; bin/lstmdata; bin/train10 )
 	rmdir /tmp/data-get.lock
     fi
 fi

@@ -33,7 +33,7 @@ convsrgb() {
     f=$1
     S=$2
     dir=$3
-    convert $f -geometry ${S}x${S} -profile `dirname $0`/sRGB_IEC61966-2-1_black_scaled.icc $dir/$i
+    convert $f -geometry ${S}x${S} -profile `dirname $0`/sRGB_v4_ICC_preference_displayclass.icc $dir/$i
 }
 
 S=2048
