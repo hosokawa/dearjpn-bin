@@ -9,6 +9,7 @@ else
     mkdir /tmp/data-get.lock > /dev/null 2>&1
     if [ $? == 0 ]; then
         ( cd /home/hosokawa/working/troml/; bin/update-ohlc; bin/lstmdata; bin/train10 )
+        ( cd /home/hosokawa/working/troml/; bin/pred10 | grep ^E: > var/result/pred-$(date +%Y%m%d).txt )
 	rmdir /tmp/data-get.lock
     fi
 fi
