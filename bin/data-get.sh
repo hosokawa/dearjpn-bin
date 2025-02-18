@@ -8,9 +8,9 @@ if [ $PRE == $POST ]; then
 else
     mkdir /tmp/data-get.lock > /dev/null 2>&1
     if [ $? == 0 ]; then
-        #( cd /home/hosokawa/working/troml/; bin/update-ohlc; bin/lstmdata; bin/train10 )
-        #( cd /home/hosokawa/working/troml/; bin/pred10 | grep ^E: > var/result/pred-$(date +%Y%m%d).txt )
         ( cd /home/hosokawa/working/troml/; bin/update-ohlc; bin/regulation )
-	rmdir /tmp/data-get.lock
+        ( mysqldump -uroot --single-transaction ohlc_v2 | pigz | ssh service 'pigz -cd | mysql -uroot ohlc_v2' )
+        rmdir /tmp/data-get.lock
     fi
 fi
+#!/bin/bash
