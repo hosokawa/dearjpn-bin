@@ -13,6 +13,11 @@ def preprocess_for_match(img_bgr: np.ndarray) -> np.ndarray:
     return edges
 
 
+def row_profile(edges: np.ndarray, x0: int, x1: int) -> np.ndarray:
+    # 1行ごとのエッジ量を 1D 特徴量として使う
+    return edges[:, x0:x1].sum(axis=1).astype(np.float32)
+
+
 def match_template_edges(
     top_img_bgr: np.ndarray,
     bottom_img_bgr: np.ndarray,
@@ -25,7 +30,12 @@ def match_template_edges(
     debug: bool = False,
 ):
     """
-    上画像(top)の下端付近(template)を、下画像(bottom)の上端付近(search)から探す。
+    上画像(top)の行プロファイル窓と、下画像(bottom)の行プロファイル窓を
+    1px単位で比較し、最良一致を探す。
+
+    テンプレート候補の開始位置:
+      topの下端から search_height 上の点を起点に、下端方向へ1px単位で走査
+
     戻り値:
       (score, y_abs, t_start, th)
         score  : マッチスコア
@@ -38,9 +48,8 @@ def match_template_edges(
     if Wt != Wb:
         raise ValueError(f"Width mismatch: top={Wt}, bottom={Wb}")
 
-    sh = min(search_height, Hb)
-    th = min(template_height, Ht, sh)
-    if th < 30 or sh < th + 1:
+    th = min(template_height, Ht, Hb)
+    if th < 30:
         return 0.0, -1, -1, th
 
     x0 = int(Wt * crop_x_ratio)
@@ -50,29 +59,61 @@ def match_template_edges(
 
     top_edges = preprocess_for_match(top_img_bgr)
     bottom_edges = preprocess_for_match(bottom_img_bgr)
+    top_prof = row_profile(top_edges, x0, x1)
+    bottom_prof = row_profile(bottom_edges, x0, x1)
 
-    # template: top の「下端」から template_offset だけ上にずらして取る
-    t_end = max(0, Ht - int(template_offset))
-    t_start = max(0, t_end - th)
-    template = top_edges[t_start:t_end, x0:x1]
+    # top側テンプレ候補の走査範囲:
+    # 下端から search_height 上を起点に、下端まで 1px ずつ。
+    t_min = Ht - int(search_height) - int(template_offset)
+    t_min = int(np.clip(t_min, 0, Ht - th))
+    t_max = Ht - th
 
-    # search: bottom の「上端」から search_offset だけ下を開始点にする
-    s0 = int(np.clip(search_offset, 0, Hb - 1))
-    s1 = min(Hb, s0 + sh)
-    if s1 - s0 < th + 1:
+    # bottom側探索範囲:
+    # 上端から 1px ずつ（search_offset があればその位置を先頭にする）
+    s0 = int(np.clip(search_offset, 0, Hb - th))
+    bottom_scan = bottom_prof[s0:Hb]
+    if bottom_scan.shape[0] < th:
         return 0.0, -1, -1, th
 
-    search = bottom_edges[s0:s1, x0:x1]
+    # sliding window を使って 1D 窓を行列化し、正規化相関をまとめて計算
+    top_windows = np.lib.stride_tricks.sliding_window_view(top_prof, th)[t_min:t_max + 1]
+    bottom_windows = np.lib.stride_tricks.sliding_window_view(bottom_scan, th)
 
-    res = cv2.matchTemplate(search, template, cv2.TM_CCOEFF_NORMED)
-    _, max_val, _, max_loc = cv2.minMaxLoc(res)
-    y_local = int(max_loc[1])
-    y_abs = s0 + y_local
+    if top_windows.size == 0 or bottom_windows.size == 0:
+        return 0.0, -1, -1, th
+
+    top_w = top_windows.astype(np.float32, copy=False)
+    bottom_w = bottom_windows.astype(np.float32, copy=False)
+
+    top_mean = top_w.mean(axis=1, keepdims=True)
+    bottom_mean = bottom_w.mean(axis=1, keepdims=True)
+    top_z = top_w - top_mean
+    bottom_z = bottom_w - bottom_mean
+
+    eps = np.float32(1e-6)
+    top_norm = np.sqrt(np.sum(top_z * top_z, axis=1, keepdims=True)) + eps
+    bottom_norm = np.sqrt(np.sum(bottom_z * bottom_z, axis=1, keepdims=True)) + eps
+
+    top_n = top_z / top_norm
+    bottom_n = bottom_z / bottom_norm
+
+    # score_matrix[i, j] = corr(top_start=t_min+i, bottom_start=s0+j)
+    score_matrix = top_n @ bottom_n.T
+    flat_idx = int(np.argmax(score_matrix))
+    i, j = np.unravel_index(flat_idx, score_matrix.shape)
+    best_score = float(score_matrix[i, j])
+    best_t_start = int(t_min + i)
+    best_y_abs = int(s0 + j)
 
     if debug:
-        print(f"    score={max_val:.3f} y_abs={y_abs}  t_start={t_start}  th={th}", file=sys.stderr)
+        print(
+            f"    score={best_score:.3f} y_abs={best_y_abs}  "
+            f"t_start={best_t_start}  th={th}  "
+            f"scan_top={t_min}..{t_max} scan_bottom={s0}..{Hb-th}",
+            file=sys.stderr
+        )
 
-    return float(max_val), int(y_abs), int(t_start), int(th)
+    return float(best_score), int(best_y_abs), int(best_t_start), int(th)
 
 
 def stitch_two_images_by_cut(
@@ -147,15 +188,14 @@ def stitch_images_vertical(
             raise ValueError(f"Width mismatch: {p} width={im.shape[1]}, expected {w0}")
 
     result = imgs[0]
-    prev = imgs[0]
 
     for idx, nxt in enumerate(imgs[1:], start=2):
         if debug:
             print(f"[{idx}]", file=sys.stderr)
 
-        # ここが「あなたの方式」
-        merged = stitch_two_images_by_cut(
-            prev, nxt,
+        # 常に現在の連結結果(result)と次画像(nxt)を1回だけマッチして更新する。
+        result = stitch_two_images_by_cut(
+            result, nxt,
             search_height=search_height,
             template_height=template_height,
             min_score=min_score,
@@ -164,30 +204,6 @@ def stitch_images_vertical(
             template_offset=template_offset,
             debug=debug
         )
-
-        # result は「これまでの結果」に対して次を足す必要があるので、
-        # result の末尾と prev は一致してる（prev が直前に足した画像）前提で、
-        # result の末尾を差し替えるイメージで更新する。
-        # 一番簡単にやるため、result を「前までの結果」ではなく「常にmerged結果」にして進める。
-        # ただし prev は nxt に更新する（次のマッチは直前画像同士が安定）。
-        if idx == 2:
-            result = merged
-        else:
-            # idx>=3: result はすでに prev を含むので、prev 部分を「top」として merged を作る必要がある。
-            # 手堅く行くため、ここは result と nxt の間で再マッチする（prevではなく result をtopにする）。
-            # ただし結果が微妙なら append されるだけなので破綻しにくい。
-            result = stitch_two_images_by_cut(
-                result, nxt,
-                search_height=search_height,
-                template_height=template_height,
-                min_score=min_score,
-                crop_x_ratio=crop_x_ratio,
-                search_offset=search_offset,
-                template_offset=template_offset,
-                debug=debug
-            )
-
-        prev = nxt
 
     if not cv2.imwrite(out_path, result):
         raise RuntimeError(f"failed to write: {out_path}")
@@ -255,4 +271,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
