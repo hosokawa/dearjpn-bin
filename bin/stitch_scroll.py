@@ -195,7 +195,7 @@ def stitch_images_vertical(
 
 def main():
     out_path = "output.png"
-    search_h = 900
+    search_h = 1000
     templ_h = 220
     min_score = 0.35
     crop_x_ratio = 0.15
